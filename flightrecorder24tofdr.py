@@ -11,6 +11,7 @@ import getopt, sys
 import os
 import time
 
+time_factor = 1000.0 # Data in input format is epoch in milliseconds (so * 1000 compored to standard unix epoch)
 
 # Input format of csv file from Flight Recorder 24
 fields_srcs = ['timedate', 'time', 'lat', 'lon', 'h msl', 'speed', 'bearing', 'accuracy', 'nx', 'ny', 'nz', 'pitch', 'roll', 'yaw', 'original pitch', 'original roll', 'original yaw', 'pressure', 'baro', 'phase', 'event']
@@ -29,7 +30,7 @@ class FlightFeature:
 	registration = ''
 	
 	def __str__(self):
-		return "Aircraft: %s (%s)\nPilot: %s\nLocation: %s\nDate: %s Time: %s" % (self.aircraft, self.registration, self.pilot, self.location, self.date, self.time)
+		return "Aircraft: %s (%s)\nPilot: %s\nLocation: %s\nDate: %s Time: UTC %s" % (self.aircraft, self.registration, self.pilot, self.location, self.date, self.time)
 
 #####
 # Clean and Filter input data
@@ -46,11 +47,12 @@ def is_number(s):
 _start_time = float('NaN')
 def convert_time(value):
 	global _start_time
+	global time_factor
 	if math.isnan(_start_time):
 		_start_time = float(value)
 		return 0.0
 	else:
-		return (float(value) - _start_time) / 1000.0
+		return (float(value) - _start_time) / time_factor
 
 def date_time_parse(value):
 	# Value format: UTC 24-Apr-2016 08:50:08.295
@@ -58,8 +60,9 @@ def date_time_parse(value):
 	conv = time.strptime(date_time, "%Z %d-%b-%Y %H:%M:%S")
 	return time.strftime("%d/%m/%Y", conv), time.strftime("%H:%M:%S", conv)
 		
-def format_and_filter_csv(input_file, output_file):
+def format_and_filter_csv(input_file, start_time, stop_time, output_file):
 	output = []
+	first_valid_row = True
 	ff = FlightFeature()
 	with open(input_file, 'rb') as ifile:
 		reader = csv.reader(ifile, delimiter=';', quotechar='|')
@@ -78,8 +81,13 @@ def format_and_filter_csv(input_file, output_file):
 			else: # Index line >= 3 contains relevant data
 				# If row correspond to data that we want to convert
 				if (len(row) == len(fields_srcs)) and (is_number(row[2])):
-					if (ind == 3):
+					if (int(row[1]) < int(start_time)): # Don't care about epoch time < start_time
+						continue
+					if (int(row[1]) > int(stop_time)): # Stop parsing after epoch time > stop_time
+						break
+					if (first_valid_row): # Store the date and time of the first valid row (beginning of flight)
 						ff.date, ff.time = date_time_parse(row[0])
+						first_valid_row = False
 					nan_val = False
 					output_row = zero_listmaker(len(fields_dest))
 					for column in range(len(fields_srcs)):
@@ -90,10 +98,10 @@ def format_and_filter_csv(input_file, output_file):
 							index = -1
 						# if field is present, then add value to the right place
 						if (index != -1):
-							if (fields_srcs[column] == 'time'):
-								value = convert_time(row[column])
-							else:
-								value = float(row[column])
+							# if (fields_srcs[column] == 'time'):
+								# value = convert_time(row[column])
+							# else:
+							value = float(row[column])
 							if (not is_number(value)) or (math.isnan(value)):
 								nan_val = True
 								break
@@ -274,12 +282,13 @@ def to_fdr(data):
 	return fdr_L
 
 def print_flight_info(fdr_data, flight_feature):
+	global time_factor
 	print str(flight_feature) + '\n'
 
 	PathL, cumsum_L = get_path_length(fdr_data)
 	print 'Flight path distance: ' + '{0:.3f}'.format(PathL/1000.0) + ' km'
 
-	m, s = divmod(fdr_data[len(fdr_data) - 1][0], 60)
+	m, s = divmod(fdr_data[len(fdr_data) - 1][0] / time_factor, 60)
 	h, m = divmod(m, 60)
 	print "Flight time: %d:%02d:%02d" % (h, m, s)
 
@@ -287,13 +296,28 @@ def print_flight_info(fdr_data, flight_feature):
 #####
 # Export function to different formats
 def write_kml(data, kml_file):
+	global time_factor
+
 	(mdir, mfilename) = os.path.split(kml_file)
 	(mnam, mext) = os.path.splitext(mfilename)
 
 	coord_str = ''
-	for xyz in data:	
-		lnstr = str(xyz[1]) + ',' + str(xyz[2]) + ',' + str(int((float(xyz[3]) - 121) / 3.28084)) + '\n' # TODO: Correction de 121 pieds
-		coord_str = coord_str + lnstr
+	tag_str = ''
+	_time = 0.0
+	for ind, xyz in enumerate(data):
+		lonlatalt_str = str(xyz[1]) + ',' + str(xyz[2]) + ',' + str(int((float(xyz[3]) - 121) / 3.28084))
+		lnstr = lonlatalt_str + '\n' # TODO: Correction de 121 pieds et exprimé en mètres (et non en pieds)
+		coord_str +=  lnstr
+		if (xyz[0] >= _time):
+			converted_time1 = time.strftime('%H:%M', time.localtime(xyz[0] / time_factor))
+			converted_time2 = time.strftime('%H:%M:%S %d/%m/%Y', time.localtime(xyz[0] / time_factor))
+			tagstr = '<Placemark>\n<name>' + converted_time1 + '</name>\n<description>' + converted_time2 + '</description>\n'
+			tagstr += '<Point><coordinates>' + lonlatalt_str + '</coordinates></Point>\n</Placemark>\n'
+			tag_str += tagstr
+			if _time == 0.0:
+				_time = xyz[0] + 60000.0
+			else:
+				_time += 60000.0
 
 	f = open(kml_file, 'wb')
 	f.write("<?xml version='1.0' encoding='UTF-8'?>\n")
@@ -309,6 +333,13 @@ def write_kml(data, kml_file):
 	f.write("			<coordinates>" + coord_str + "</coordinates>\n")
 	f.write("		</LineString>\n")
 	f.write("	</Placemark>\n")
+
+	f.write("   <Folder>\n")
+	f.write("      <name>Tags</name>\n")
+	f.write("      <description>Tags added during the flight.</description>\n")
+	f.write(tag_str)
+	f.write("   </Folder>\n")
+
 	f.write("</Document>\n")
 	f.write("</kml>\n")
 	f.close()
@@ -335,17 +366,17 @@ def write_fdr(data, flight_feature, fdr_file):
 	rf = 1.0
 	
 	for index, rec in enumerate(data):
-		t_str = '{0:.2f}'.format(rec[0])
+		t_str = '{0:.3f}'.format(convert_time(rec[0]))
 		lonstr = '{0:.5f}'.format(rec[1])
 		latstr = '{0:.5f}'.format(rec[2])
-		elevstr = str(int(rec[3] * 3.28084))
+		elevstr = str(int(rec[3])) # * 3.28084
 		pitchstr = '{0:.2f}'.format(rec[6])
 		rollstr = '{0:.2f}'.format(rec[7] * rf)
 		hdgstr = '{0:.2f}'.format(rec[5])
 		kias_str = '{0:.2f}'.format(rec[4] * 1.94384449)		
 		ailDefl = '{0:.2f}'.format((rec[7] / 90.0) * 0.3) 
 		elevDefl = '{0:.2f}'.format((rec[6] / 90.0) * 0.3)
-		
+
 		if index == 0:
 			pitchstr = '{0:.2f}'.format(data[2][6])
 			rollstr = '{0:.2f}'.format(data[3][7] * rf)
@@ -358,8 +389,11 @@ def write_fdr(data, flight_feature, fdr_file):
 			ailDefl = '{0:.2f}'.format((data[3][7] / 90.0) * 0.3) 
 
 		f.write('DATA,' + t_str + ',25,' + lonstr + ',' + latstr + ',' + elevstr + ', 0,' + \
-	ailDefl + ',' + elevDefl + ',0,' + pitchstr + ',' + rollstr + ',' + hdgstr + ',' + kias_str + \
-	',0,0,0,0.5,20,0, 0,0,0,0,0,0,0,0,0, 11010,10930,4,4,90, 270,0,0,10,10,1,1,10,10,0,0,0,0,10,10, 0,0,0,0,0,0,0,0,0,0,500, 29.92,0,0,0,0,0,0, 1,1,0,0, 2000,2000,0,0, 2000,2000,0,0, 30,30,0,0, 100,100,0,0, 100,100,0,0, 0,0,0,0, 0,0,0,0, 1500,1500,0,0, 400,400,0,0, 1000,1000,0,0, 1000,1000,0,0, 0,0,0,0,' + '\n')
+ailDefl + ',' + elevDefl + ',0,' + pitchstr + ',' + rollstr + ',' + hdgstr + ',' + kias_str + \
+',0,0,0,0.5,20,0, 0,0,0,0,0,0,0,0,0, 11010,10930,4,4,90, 270,0,0,10,10,1,1,10,10,0,0,0,0,10,10, \
+0,0,0,0,0,0,0,0,0,0,500, 29.92,0,0,0,0,0,0 , 1,1,0,0 , 2000,2000,0,0, 2000,2000,0,0 , 30,30,0,0 , \
+100,100,0,0 , 100,100,0,0 , 0,0,0,0 , 0,0,0,0 , 1500,1500,0,0 , 400,400,0,0 , 1000,1000,0,0 , \
+1000,1000,0,0 , 0,0,0,0,' + '\n')
 
 	f.close()
 
@@ -370,8 +404,9 @@ def usage():
 	printf("Usage:")
 
 def main(argv):
+	global time_factor
 	try:
-		opts, args = getopt.getopt(argv, "hi:o:", ["help", "input=", "output="])
+		opts, args = getopt.getopt(argv, "hi:o:", ["help", "input=", "output=", "start-time=", "stop-time="])
 	except getopt.GetoptError:
 		usage()
 		sys.exit(2)
@@ -383,8 +418,12 @@ def main(argv):
 			input_file = arg
 		elif opt in ("-o", "--output"):
 			output_file = arg
+		elif opt in ("--start-time"):
+			start_time = time.mktime(time.strptime(arg, "%d/%m/%Y_%H:%M:%S")) * time_factor
+		elif opt in ("--stop-time"):
+			stop_time = time.mktime(time.strptime(arg, "%d/%m/%Y_%H:%M:%S")) * time_factor
 	
-	raw_data, flight_feature = format_and_filter_csv(input_file, output_file + '.csv')
+	raw_data, flight_feature = format_and_filter_csv(input_file, start_time, stop_time, output_file + '.csv')
 	write_kml(raw_data, output_file + '.kml')
 
 	fdr_data = to_fdr(raw_data)
