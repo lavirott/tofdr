@@ -443,7 +443,21 @@ ailDefl + ',' + elevDefl + ',0,' + pitchstr + ',' + rollstr + ',' + hdgstr + ','
 # Main Program
 
 def usage():
-	print("Usage:")
+	print "Usage: " + sys.argv[0] + " -i SOURCE -o DEST [option]"
+	print "flightrecorder24tofdr.py generate kml, csv and fdr DEST files from a flightrecorder24 log"
+	print "Options:"
+	print "    -h, --help"
+	print "        Print this message"
+	print "    -i, --input=SOURCE"
+	print "        Specify the input filename"
+	print "    -o, --output=DEST"
+	print "        Specify a generic filename as output (generate DEST.kml, DEST.fdr, ...)"
+	print "    --start-time=TIME"
+	print "        Specify the start time of the flight (truncated data before this time)."
+	print "         Time is specified as day/month/year_hour:minute:second"
+	print "    --stop-time=TIME"
+	print "        Specify the stop time of the flight (truncated data after this time)."
+	print "	       Time is specified as day/month/year_hour:minute:second"
 
 def main(argv):
 	global time_factor
@@ -452,6 +466,7 @@ def main(argv):
 	try:
 		opts, args = getopt.getopt(argv, "hi:o:", ["help", "input=", "output=", "start-time=", "stop-time="])
 	except getopt.GetoptError:
+		print sys.argv[0] + ": invalid option"
 		usage()
 		sys.exit(2)
 	for opt, arg in opts:
@@ -466,6 +481,7 @@ def main(argv):
 			start_time = time.mktime(time.strptime(arg, "%d/%m/%Y_%H:%M:%S")) * time_factor
 		elif opt in ("--stop-time"):
 			stop_time = time.mktime(time.strptime(arg, "%d/%m/%Y_%H:%M:%S")) * time_factor
+
 
 	raw_data, flight_feature = format_and_filter_csv(input_file, start_time, stop_time, output_file + '.csv')
 	write_french_csv(raw_data, 'TIME;LONG;LAT;ALT;ROLL;PITCH;YAW', output_file + '_raw.csv')
