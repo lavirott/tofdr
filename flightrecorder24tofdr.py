@@ -6,9 +6,9 @@ import csv
 import math
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
+import matplotlib.pyplot as plot
 
-import getopt, sys
-import os
+import getopt, os, sys
 import time
 
 time_factor = 1000.0 # Data in input format is epoch in milliseconds (so * 1000 compored to standard unix epoch)
@@ -440,18 +440,42 @@ ailDefl + ',' + elevDefl + ',0,' + pitchstr + ',' + rollstr + ',' + hdgstr + ','
 	return output
 
 #####
+# Plot functions
+
+def draw_figure(data, output_file):
+	mat = list(zip(*data))
+	x = mat[0] # time
+	y = mat[3] # altitude
+
+	plot.xlabel('Time')
+	plot.title(output_file)
+	plot.plot(x, y, 'k')
+	plot.axis( [ min(x), max(x), min(y), max(y) ] )
+	plot.savefig(output_file)
+
+#####
 # Main Program
+def output_filename(output_dir, filename_prefix, filename_suffix):
+	(dir, filename) = os.path.split(output_dir)
+	return output_dir + '/' + filename_prefix + filename + filename_suffix
 
 def usage():
-	print "Usage: " + sys.argv[0] + " -i SOURCE -o DEST [option]"
-	print "flightrecorder24tofdr.py generate kml, csv and fdr DEST files from a flightrecorder24 log"
+	print "Usage: " + sys.argv[0] + " -i FILE -o DIR [option]"
+	print
+	print "flightrecorder24tofdr.py generates files in DIR from a flightrecorder24 log file"
+	print
+	print "Arguments:"
+	print "    -i, --input=FILE"
+	print "        Specify the input filename in csv format"
+	print "    -o, --output=DIR"
+	print "        Specify a directory name to generate kml, fdr files in"
 	print "Options:"
+	print "    -d, --debug"
+	print "        Activate debug flag to create more data files for debugging"
 	print "    -h, --help"
 	print "        Print this message"
-	print "    -i, --input=SOURCE"
-	print "        Specify the input filename"
-	print "    -o, --output=DEST"
-	print "        Specify a generic filename as output (generate DEST.kml, DEST.fdr, ...)"
+	print "    -p, --plot"
+	print "        Generate different figures representing principal parameters"
 	print "    --start-time=TIME"
 	print "        Specify the start time of the flight (truncated data before this time)."
 	print "         Time is specified as day/month/year_hour:minute:second"
@@ -461,10 +485,16 @@ def usage():
 
 def main(argv):
 	global time_factor
+
+	# Initialize parameters values
+	input_file = ""
+	output = ""
 	start_time = 0
 	stop_time = time.mktime(time.localtime()) * time_factor
+	debug = False
+	plotting = False
 	try:
-		opts, args = getopt.getopt(argv, "hi:o:", ["help", "input=", "output=", "start-time=", "stop-time="])
+		opts, args = getopt.getopt(argv, "hdi:o:p", ["help", "debug", "input=", "output=", "plot", "start-time=", "stop-time="])
 	except getopt.GetoptError:
 		print sys.argv[0] + ": invalid option"
 		usage()
@@ -473,28 +503,45 @@ def main(argv):
 		if opt in ("-h", "--help"):
 			usage()
 			sys.exit()
+		elif opt in ("-d", "--debug"):
+			debug = True
+		elif opt in ("-p", "--plot"):
+			plotting = True
 		elif opt in ("-i", "--input"):
 			input_file = arg
 		elif opt in ("-o", "--output"):
-			output_file = arg
+			output = arg
 		elif opt in ("--start-time"):
 			start_time = time.mktime(time.strptime(arg, "%d/%m/%Y_%H:%M:%S")) * time_factor
 		elif opt in ("--stop-time"):
 			stop_time = time.mktime(time.strptime(arg, "%d/%m/%Y_%H:%M:%S")) * time_factor
 
+	if (input_file == "") or (output == ""):
+		print sys.argv[0] + ": must specify arguments"
+		usage()
+		sys.exit(1)
+	else:
+		if not os.path.isdir(output):
+			os.makedirs(output)
 
-	raw_data, flight_feature = format_and_filter_csv(input_file, start_time, stop_time, output_file + '.csv')
-	write_french_csv(raw_data, 'TIME;LONG;LAT;ALT;ROLL;PITCH;YAW', output_file + '_raw.csv')
+	raw_data, flight_feature = format_and_filter_csv(input_file, start_time, stop_time, output_filename(output, '', '.csv'))
+	if debug:
+		write_french_csv(raw_data, 'TIME;LONG;LAT;ALT;ROLL;PITCH;YAW', output_filename(output, '', '_raw.csv'))
 
 	fixed_data = fix_raw_data(raw_data)
-	write_french_csv(fixed_data, 'TIME;LONG;LAT;ALT;ROLL;PITCH;YAW', output_file + '_fixed.csv')
-	write_kml(fixed_data, output_file + '.kml')
+	if debug:
+		write_french_csv(fixed_data, 'TIME;LONG;LAT;ALT;ROLL;PITCH;YAW', output_filename(output, '', '_fixed.csv'))
+	write_kml(fixed_data, output_filename(output, '', '.kml'))
 
 	fdr_data = to_fdr(fixed_data)
-	write_french_csv(fdr_data, 'TIME;LONG;LAT;ALT;SPEED;BEARING;PITCH;ROLL; DISTANCE', output_file + '_fdr.csv')
+	if debug:
+		write_french_csv(fdr_data, 'TIME;LONG;LAT;ALT;SPEED;BEARING;PITCH;ROLL; DISTANCE', output_filename(output, '', '_fdr.csv'))
+	if plotting:
+		draw_figure(fdr_data, output_filename(output, 'plot_', '_fdr.png'))
 
-	written_data = write_fdr(fdr_data, flight_feature, output_file + '.fdr')
-	write_french_csv(written_data, 'TIME;LONG;LAT;ALT;AILDEFL;ELEVDEFL;PITCH;ROLL;HEADING;SPEED', output_file + '_written.csv')
+	written_data = write_fdr(fdr_data, flight_feature, output_filename(output, '', '.fdr'))
+	if debug:
+		write_french_csv(written_data, 'TIME;LONG;LAT;ALT;AILDEFL;ELEVDEFL;PITCH;ROLL;HEADING;SPEED', output_filename(output, '', '_written.csv'))
 
 	print_flight_info(fdr_data, flight_feature)
 
