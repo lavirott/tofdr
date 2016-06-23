@@ -66,11 +66,11 @@ def format_and_filter_csv(input_file, start_time, stop_time, output_file):
 	ff = FlightFeature()
 	with open(input_file, 'rb') as ifile:
 		reader = csv.reader(ifile, delimiter=';', quotechar='|')
-		for ind, row in enumerate(reader):
-			if (ind < 3):
+		for index, row in enumerate(reader):
+			if (index < 3):
 				# Do not care of line 0 and 2 which contain text headers
-				if (ind == 1):
-					if (row[0] == "1.2.1"): # Check the Flight24 version
+				if (index == 1):
+					if (row[0] == "1.2.1") or (row[0] == "1.2.4"): # Check the Flight24 version
 						# Don't get date from that field beacause it's not Zulu time
 						ff.location = row[3]
 						ff.pilot = row[5]
@@ -93,11 +93,11 @@ def format_and_filter_csv(input_file, start_time, stop_time, output_file):
 					for column in range(len(fields_srcs)):
 						# Try to find src field in dest
 						try:
-							index = fields_dest.index(fields_srcs[column])
+							ind = fields_dest.index(fields_srcs[column])
 						except ValueError:
-							index = -1
+							ind = -1
 						# if field is present, then add value to the right place
-						if (index != -1):
+						if (ind != -1):
 							# if (fields_srcs[column] == 'time'):
 								# value = convert_time(row[column])
 							# else:
@@ -105,14 +105,14 @@ def format_and_filter_csv(input_file, start_time, stop_time, output_file):
 							if (not is_number(value)) or (math.isnan(value)):
 								nan_val = True
 								break
-							output_row[index] = value
+							output_row[ind] = value
 					#output_row = ['DATA'] + output_row + ['']
 					if not(nan_val):
 						output.append(output_row)
 
-	with open(output_file, 'wb') as ofile:
-		writer = csv.writer(ofile, delimiter=',')
-		writer.writerows(output)
+	# with open(output_file, 'wb') as ofile:
+		# writer = csv.writer(ofile, delimiter=';')
+		# writer.writerows(output)
 	return output, ff
 
 #####
@@ -128,23 +128,56 @@ def great_circle(pointA, pointB):
 	d = R * math.sqrt(x2 * x2 + y2 * y2)
 	return d
 
-def get_path_length(coords):
-	totL = 0.0	
-	cumsum_L = []
-	cumsum_L.append(0.0)
+def get_path_length(data):
+	total_length = 0.0
+	segment_list = []
+	segment_list.append(0.0)
 
-	for index in range(len(coords)-1):
-		pointA = coords[index]
-		pointB = coords[index + 1]
-		segL = great_circle(pointA, pointB)
-		totL+=segL		
-		cumsum_L.append(segL)
-	return totL, cumsum_L
+	for index in range(len(data)-1):
+		pointA = data[index]
+		pointB = data[index + 1]
+		segment_length = great_circle(pointA, pointB)
+		total_length += segment_length
+		segment_list.append(segment_length)
+	return total_length, segment_list
+
+#####
+# Correct and smooth data
+def fix_raw_data(data):
+	fixed_data = []
+	for index, row in enumerate(data):
+		try:
+			pointA = data[index]
+			pointB = data[index + 1]
+			if great_circle(pointA, pointB) == 0:
+				continue
+		except:
+			break
+		fixed_row = row
+		# Correction of altitude: substract 121 feet
+		altitude = row[3] - 137
+		if altitude < 13: # TODO: depend on the aiport altitude
+			altitude = 13
+		fixed_row[3] = altitude
+		# Correction of roll (+160°)
+		roll = row[4]
+		if (roll > 0):
+			roll -= 180
+		else:
+			roll += 180
+		fixed_row[4] = roll
+		# Correction of pitch (+25°)
+		pitch = row[5]
+		fixed_row[5] = pitch + 23
+
+		fixed_data.append(fixed_row)
+	return fixed_data
 
 #####
 # Manage to FDR format
 
 def to_fdr(data):
+	global time_factor
 	pos_lst = []
 	timelst = []
 	bear_lst = []
@@ -156,43 +189,40 @@ def to_fdr(data):
 	cnt = 0
 	cumT = 0.0
 
-	fdr_L=[]
+	fdr_data=[]
 
 	# First select the right parameters for the moment (TODO: to be modified to be more suitable)
 	smooth_raw = False
 	rpy = True
 	mov_avg = False
-	bearing = 0.0
-	pitch = 0.0
-	roll = 0.0
 	
-	for ind, rec in enumerate(data):
-		#print str(ind) + ': ' + str(rec)
-		pos_lst.append([rec[1], rec[2], rec[3]])
+	for index, row in enumerate(data):
+		#print str(index) + ': ' + str(row)
+		pos_lst.append([row[0], row[1], row[2], row[3]]) # Done: added row[0] to be able to use great_circle
 		pointA = (pos_lst[len(pos_lst) - 2])
 		pointB = (pos_lst[len(pos_lst) - 1])
 		#print str(pos_lst) + '\nPoint A: ' + str(pointA) + '\nPoint B: ' + str(pointB) + '\n'
 
 		if smooth_raw:	
-			timelst.append(rec[4])
+			timelst.append(row[4])
 		else:		
-			if ind == 0:
+			if index == 0:
 				Tdif = 0.0
 			else:
-				Tdif = rec[0] - data[ind - 1][0]
+				Tdif = row[0] - data[index - 1][0]
 			cumT += Tdif
 			timelst.append(cumT)
 		
-		time_chng = timelst[len(timelst) - 1]-timelst[len(timelst) - 2]
+		time_chng = (timelst[len(timelst) - 1] - timelst[len(timelst) - 2]) / time_factor
 		if time_chng == 0.0:
 			time_chng = 0.0000000001
-		#print 'Time: ' + str(time_chng)
+			print 'Suspect time at index ' + str(index) + ' !'
 		
-		# Get bearing	
-		if rpy == 'True':
-			bearing = rec[6]
+		# Get bearing
+		if rpy:
+			bearing = row[6]
 			bear_lst.append(bearing)
-		elif rpy == 'False':		
+		else:
 			if cnt == 0:
 				bearing = 0
 			else:	
@@ -204,10 +234,10 @@ def to_fdr(data):
 					bearing = bear_lst[len(bear_lst)-1]
 
 		#Get roll
-		if rpy == 'True':
-			roll = rec[4]
+		if rpy:
+			roll = row[4]
 			roll_lst.append(roll)
-		elif rpy == 'False':	
+		else:
 			if len(pos_lst) < 3:
 				roll = 0.0
 				vel = 0.0		
@@ -224,7 +254,7 @@ def to_fdr(data):
 				degsec_lst.append(degsec1)		
 			
 				if smooth_raw:
-					vel1 = rec[3]
+					vel1 = row[3]
 				else:
 					d = great_circle(pointA, pointB)							
 					vel1 = d / abs(time_chng)
@@ -236,7 +266,7 @@ def to_fdr(data):
 					if len(vel_lst) > avg_win:	
 						vel = sum(vel_lst[len(vel_lst)-avg_win:])/avg_win	
 						degsec = sum(degsec_lst[len(degsec_lst)-avg_win:])/avg_win
-					else:	
+					else:
 						vel = vel1
 						degsec = degsec1
 				else:	
@@ -247,10 +277,10 @@ def to_fdr(data):
 				roll_lst.append(roll)
 		
 		# Get pitch
-		if rpy == 'True':
-			pitch = rec[5]
+		if rpy:
+			pitch = row[5]
 			pitch_lst.append(pitch)
-		elif rpy == 'False':	
+		else:
 			if cnt == 0:
 				pitch = 0
 			else:	
@@ -258,15 +288,16 @@ def to_fdr(data):
 				pitch_lst.append(pitch)
 
 		if smooth_raw:
-			t_st = rec[4] 
-			v_st = rec[3]
+			t_st = row[4]
+			v_st = row[3]
 		else:
-			t_st = timelst[len(timelst)-1]
-			try:
-				v_st = vel
-			except:
-				d = great_circle(pointA, pointB)							
-				v_st = d / abs(time_chng)
+			t_st = timelst[len(timelst) - 1]
+			# try:
+				# v_st = vel
+			# except:
+			d = great_circle(pointA, pointB)
+			v_st = (d / abs(time_chng)) / 0.51444444
+			#print str(d) + ' ' + str(time_chng) + ' ' + str(v_st)
 				
 		if mov_avg == True: 
 			if len(roll_lst) > avg_win: 
@@ -276,25 +307,33 @@ def to_fdr(data):
 			if len(bear_lst) > avg_win:
 				anglst = bear_lst[len(bear_lst)-avg_win:]
 				bearing = AvAng(anglst)
-									
-		fdr_L.append([t_st, rec[1], rec[2], rec[3], v_st, bearing, pitch, roll])
+
+		fdr_data.append([t_st, row[1], row[2], row[3], v_st, bearing, pitch, roll, d])
 		cnt += 1
-	return fdr_L
+	return fdr_data
 
 def print_flight_info(fdr_data, flight_feature):
 	global time_factor
 	print str(flight_feature) + '\n'
 
-	PathL, cumsum_L = get_path_length(fdr_data)
-	print 'Flight path distance: ' + '{0:.3f}'.format(PathL/1000.0) + ' km'
+	path_length, segment_list = get_path_length(fdr_data)
+	print 'Flight path distance: ' + '{0:.3f}'.format(path_length / 1000.0) + ' km'
 
 	m, s = divmod(fdr_data[len(fdr_data) - 1][0] / time_factor, 60)
 	h, m = divmod(m, 60)
 	print "Flight time: %d:%02d:%02d" % (h, m, s)
 
-	
 #####
 # Export function to different formats
+def write_french_csv(data, header, file):
+	csvfile = open(file, 'wb')
+	csvfile.write(header + '\n')
+	for row in data:
+		for num in row:
+			csvfile.write(str(num).replace('.', ',') + ';')
+		csvfile.write('\n')
+	csvfile.close()
+
 def write_kml(data, kml_file):
 	global time_factor
 
@@ -304,18 +343,18 @@ def write_kml(data, kml_file):
 	coord_str = ''
 	tag_str = ''
 	_time = 0.0
-	for ind, xyz in enumerate(data):
-		lonlatalt_str = str(xyz[1]) + ',' + str(xyz[2]) + ',' + str(int((float(xyz[3]) - 121) / 3.28084))
-		lnstr = lonlatalt_str + '\n' # TODO: Correction de 121 pieds et exprimé en mètres (et non en pieds)
+	for index, row in enumerate(data):
+		lonlatalt_str = str(row[1]) + ',' + str(row[2]) + ',' + str(int((float(row[3])) / 3.28084)) # Converted to meters instead of feet
+		lnstr = lonlatalt_str + '\n'
 		coord_str +=  lnstr
-		if (xyz[0] >= _time):
-			converted_time1 = time.strftime('%H:%M', time.localtime(xyz[0] / time_factor))
-			converted_time2 = time.strftime('%H:%M:%S %d/%m/%Y', time.localtime(xyz[0] / time_factor))
+		if (row[0] >= _time):
+			converted_time1 = time.strftime('%H:%M', time.localtime(row[0] / time_factor))
+			converted_time2 = time.strftime('%H:%M:%S %d/%m/%Y', time.localtime(row[0] / time_factor))
 			tagstr = '<Placemark>\n<name>' + converted_time1 + '</name>\n<description>' + converted_time2 + '</description>\n'
 			tagstr += '<Point><coordinates>' + lonlatalt_str + '</coordinates></Point>\n</Placemark>\n'
 			tag_str += tagstr
 			if _time == 0.0:
-				_time = xyz[0] + 60000.0
+				_time = row[0] + 60000.0
 			else:
 				_time += 60000.0
 
@@ -348,6 +387,7 @@ def write_fdr(data, flight_feature, fdr_file):
 	(mdir, mfilename) = os.path.split(fdr_file)
 	(mnam, mext) = os.path.splitext(mfilename)
 
+	output = []
 	f = open(fdr_file, 'wb')
 	f.write('A' + '\n')
 	f.write('2' + '\n')
@@ -362,20 +402,20 @@ def write_fdr(data, flight_feature, fdr_file):
 	f.write('TIME,' + flight_feature.time + '\n')
 	f.write('\n')
 
-	#roll factor, set to 10 or so for small UAVs or RC models
+	# Roll factor, set to 10 or so for small UAVs or RC models
 	rf = 1.0
 	
-	for index, rec in enumerate(data):
-		t_str = '{0:.3f}'.format(convert_time(rec[0]))
-		lonstr = '{0:.5f}'.format(rec[1])
-		latstr = '{0:.5f}'.format(rec[2])
-		elevstr = str(int(rec[3])) # * 3.28084
-		pitchstr = '{0:.2f}'.format(rec[6])
-		rollstr = '{0:.2f}'.format(rec[7] * rf)
-		hdgstr = '{0:.2f}'.format(rec[5])
-		kias_str = '{0:.2f}'.format(rec[4] * 1.94384449)		
-		ailDefl = '{0:.2f}'.format((rec[7] / 90.0) * 0.3) 
-		elevDefl = '{0:.2f}'.format((rec[6] / 90.0) * 0.3)
+	for index, row in enumerate(data):
+		t_str = '{0:.3f}'.format(convert_time(row[0]))
+		lonstr = '{0:.6f}'.format(row[1])
+		latstr = '{0:.6f}'.format(row[2])
+		elevstr = str(int(row[3])) # * 3.28084
+		pitchstr = '{0:.2f}'.format(row[6])
+		rollstr = '{0:.2f}'.format(row[7] * rf)
+		hdgstr = '{0:.2f}'.format(row[5])
+		kias_str = '{0:.2f}'.format(row[4]) # * 1.94384449
+		ailDefl = '{0:.2f}'.format((row[7] / 90.0) * 0.3)
+		elevDefl = '{0:.2f}'.format((row[6] / 90.0) * 0.3)
 
 		if index == 0:
 			pitchstr = '{0:.2f}'.format(data[2][6])
@@ -394,17 +434,21 @@ ailDefl + ',' + elevDefl + ',0,' + pitchstr + ',' + rollstr + ',' + hdgstr + ','
 0,0,0,0,0,0,0,0,0,0,500, 29.92,0,0,0,0,0,0 , 1,1,0,0 , 2000,2000,0,0, 2000,2000,0,0 , 30,30,0,0 , \
 100,100,0,0 , 100,100,0,0 , 0,0,0,0 , 0,0,0,0 , 1500,1500,0,0 , 400,400,0,0 , 1000,1000,0,0 , \
 1000,1000,0,0 , 0,0,0,0,' + '\n')
+		output.append([t_str, lonstr, latstr, elevstr, ailDefl, elevDefl, pitchstr, rollstr, hdgstr, kias_str])
 
 	f.close()
+	return output
 
 #####
 # Main Program
 
 def usage():
-	printf("Usage:")
+	print("Usage:")
 
 def main(argv):
 	global time_factor
+	start_time = 0
+	stop_time = time.mktime(time.localtime()) * time_factor
 	try:
 		opts, args = getopt.getopt(argv, "hi:o:", ["help", "input=", "output=", "start-time=", "stop-time="])
 	except getopt.GetoptError:
@@ -422,12 +466,19 @@ def main(argv):
 			start_time = time.mktime(time.strptime(arg, "%d/%m/%Y_%H:%M:%S")) * time_factor
 		elif opt in ("--stop-time"):
 			stop_time = time.mktime(time.strptime(arg, "%d/%m/%Y_%H:%M:%S")) * time_factor
-	
-	raw_data, flight_feature = format_and_filter_csv(input_file, start_time, stop_time, output_file + '.csv')
-	write_kml(raw_data, output_file + '.kml')
 
-	fdr_data = to_fdr(raw_data)
-	write_fdr(fdr_data, flight_feature, output_file + '.fdr')
+	raw_data, flight_feature = format_and_filter_csv(input_file, start_time, stop_time, output_file + '.csv')
+	write_french_csv(raw_data, 'TIME;LONG;LAT;ALT;ROLL;PITCH;YAW', output_file + '_raw.csv')
+
+	fixed_data = fix_raw_data(raw_data)
+	write_french_csv(fixed_data, 'TIME;LONG;LAT;ALT;ROLL;PITCH;YAW', output_file + '_fixed.csv')
+	write_kml(fixed_data, output_file + '.kml')
+
+	fdr_data = to_fdr(fixed_data)
+	write_french_csv(fdr_data, 'TIME;LONG;LAT;ALT;SPEED;BEARING;PITCH;ROLL; DISTANCE', output_file + '_fdr.csv')
+
+	written_data = write_fdr(fdr_data, flight_feature, output_file + '.fdr')
+	write_french_csv(written_data, 'TIME;LONG;LAT;ALT;AILDEFL;ELEVDEFL;PITCH;ROLL;HEADING;SPEED', output_file + '_written.csv')
 
 	print_flight_info(fdr_data, flight_feature)
 
