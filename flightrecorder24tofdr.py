@@ -308,7 +308,7 @@ def to_fdr(data):
 				anglst = bear_lst[len(bear_lst)-avg_win:]
 				bearing = AvAng(anglst)
 
-		fdr_data.append([t_st, row[1], row[2], row[3], v_st, bearing, pitch, roll, d])
+		fdr_data.append([t_st, row[1], row[2], row[3], v_st, bearing, pitch, roll])
 		cnt += 1
 	return fdr_data
 
@@ -428,12 +428,7 @@ def write_fdr(data, flight_feature, fdr_file):
 			rollstr = '{0:.2f}'.format(data[3][7] * rf)
 			ailDefl = '{0:.2f}'.format((data[3][7] / 90.0) * 0.3) 
 
-		f.write('DATA,' + t_str + ',25,' + lonstr + ',' + latstr + ',' + elevstr + ', 0,' + \
-ailDefl + ',' + elevDefl + ',0,' + pitchstr + ',' + rollstr + ',' + hdgstr + ',' + kias_str + \
-',0,0,0,0.5,20,0, 0,0,0,0,0,0,0,0,0, 11010,10930,4,4,90, 270,0,0,10,10,1,1,10,10,0,0,0,0,10,10, \
-0,0,0,0,0,0,0,0,0,0,500, 29.92,0,0,0,0,0,0 , 1,1,0,0 , 2000,2000,0,0, 2000,2000,0,0 , 30,30,0,0 , \
-100,100,0,0 , 100,100,0,0 , 0,0,0,0 , 0,0,0,0 , 1500,1500,0,0 , 400,400,0,0 , 1000,1000,0,0 , \
-1000,1000,0,0 , 0,0,0,0,' + '\n')
+		f.write('DATA,' + t_str + ',25,' + lonstr + ',' + latstr + ',' + elevstr + ', 0,' + ailDefl + ',' + elevDefl + ',0,' + pitchstr + ',' + rollstr + ',' + hdgstr + ',' + kias_str + ',0,0,0,0.5,20,0, 0,0,0,0,0,0,0,0,0, 11010,10930,4,4,90, 270,0,0,10,10,1,1,10,10,0,0,0,0,10,10, 0,0,0,0,0,0,0,0,0,0,500, 29.92,0,0,0,0,0,0, 1,1,0,0, 2000,2000,0,0, 2000,2000,0,0, 30,30,0,0, 100,100,0,0, 100,100,0,0, 0,0,0,0, 0,0,0,0, 1500,1500,0,0, 400,400,0,0, 1000,1000,0,0, 1000,1000,0,0, 0,0,0,0,' + '\n')
 		output.append([t_str, lonstr, latstr, elevstr, ailDefl, elevDefl, pitchstr, rollstr, hdgstr, kias_str])
 
 	f.close()
@@ -442,16 +437,37 @@ ailDefl + ',' + elevDefl + ',0,' + pitchstr + ',' + rollstr + ',' + hdgstr + ','
 #####
 # Plot functions
 
-def draw_figure(data, output_file):
-	mat = list(zip(*data))
-	x = mat[0] # time
-	y = mat[3] # altitude
+def find_label_index(format, label):
+	for index, value in enumerate(format.split(';')):
+		if (value == label):
+			return index
+	return -1
 
-	plot.xlabel('Time')
-	plot.title(output_file)
-	plot.plot(x, y, 'k')
-	plot.axis( [ min(x), max(x), min(y), max(y) ] )
+def plot_2Dfigure(data, format, output, output_prefix, x_axis, y_axis):
+	mat = list(zip(*data))
+
+	x_index = find_label_index(format, x_axis)
+	y_index = find_label_index(format, y_axis)
+	x_values = mat[x_index]
+	y_values = mat[y_index]
+
+	output_file = output_filename(output, 'plot' + output_prefix + '_', '_' + str(x_axis) + '_' + str(y_axis) + '.png')
+	plot.xlabel(x_axis)
+	plot.ylabel(y_axis)
+	plot.title(str(x_axis) + '_' + str(y_axis))
+	plot.plot(x_values, y_values, 'royalblue')
+	plot.axis( [ min(x_values), max(x_values), min(y_values), max(y_values) ] )
+	#plot.show()
 	plot.savefig(output_file)
+	plot.clf()
+
+def plot_figures(data, format, output, output_prefix):
+	plot_2Dfigure(data, format, output, output_prefix, 'Lon', 'Lat')
+	plot_2Dfigure(data, format, output, output_prefix, 'Time', 'Alt')
+	plot_2Dfigure(data, format, output, output_prefix, 'Time', 'Speed')
+	plot_2Dfigure(data, format, output, output_prefix, 'Time', 'Pitch')
+	plot_2Dfigure(data, format, output, output_prefix, 'Time', 'Roll')
+	plot_2Dfigure(data, format, output, output_prefix, 'Time', 'Bearing')
 
 #####
 # Main Program
@@ -535,9 +551,9 @@ def main(argv):
 
 	fdr_data = to_fdr(fixed_data)
 	if debug:
-		write_french_csv(fdr_data, 'TIME;LONG;LAT;ALT;SPEED;BEARING;PITCH;ROLL; DISTANCE', output_filename(output, '', '_fdr.csv'))
+		write_french_csv(fdr_data, 'TIME;LONG;LAT;ALT;SPEED;BEARING;PITCH;ROLL', output_filename(output, '', '_fdr.csv'))
 	if plotting:
-		draw_figure(fdr_data, output_filename(output, 'plot_', '_fdr.png'))
+		plot_figures(fdr_data, 'Time;Lon;Lat;Alt;Speed;Bearing;Pitch;Roll', output, '_fdr')
 
 	written_data = write_fdr(fdr_data, flight_feature, output_filename(output, '', '.fdr'))
 	if debug:
