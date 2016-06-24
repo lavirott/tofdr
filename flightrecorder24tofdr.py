@@ -189,43 +189,22 @@ def smooth_data(data, sigma):
 
 #####
 # Manage FDR format
-
 def to_fdr(data):
 	global time_factor
+
 	pos_lst = []
 	timelst = []
-	bear_lst = []
-	pitch_lst = []
-	vel_lst = []
-	roll_lst = []
-	degsec_lst = []
-
-	cnt = 0
-	cumT = 0.0
-
 	fdr_data=[]
 
-	# First select the right parameters for the moment (TODO: to be modified to be more suitable)
-	smooth_raw = False
-	rpy = True
-	mov_avg = False
-	
-	for index, row in enumerate(data):
-		#print str(index) + ': ' + str(row)
-		pos_lst.append([row[0], row[1], row[2], row[3]]) # Done: added row[0] to be able to use great_circle
-		pointA = (pos_lst[len(pos_lst) - 2])
-		pointB = (pos_lst[len(pos_lst) - 1])
-		#print str(pos_lst) + '\nPoint A: ' + str(pointA) + '\nPoint B: ' + str(pointB) + '\n'
+	cumT = 0.0
 
-		if smooth_raw:	
-			timelst.append(row[4])
-		else:		
-			if index == 0:
-				Tdif = 0.0
-			else:
-				Tdif = row[0] - data[index - 1][0]
-			cumT += Tdif
-			timelst.append(cumT)
+	for index, row in enumerate(data):
+		if index == 0:
+			Tdif = 0.0
+		else:
+			Tdif = row[0] - data[index - 1][0]
+		cumT += Tdif
+		timelst.append(cumT)
 		
 		time_chng = (timelst[len(timelst) - 1] - timelst[len(timelst) - 2]) / time_factor
 		if time_chng == 0.0:
@@ -234,97 +213,19 @@ def to_fdr(data):
 				print 'Warning: suspect time at index ' + str(index) + ' !'
 		
 		# Get bearing
-		if rpy:
-			bearing = row[6]
-			bear_lst.append(bearing)
-		else:
-			if cnt == 0:
-				bearing = 0
-			else:	
-				d = great_circle(pointA, pointB)
-				if d > 0:
-					bearing = BearingCalc(pointA, pointB)		
-					bear_lst.append(bearing)
-				else:
-					bearing = bear_lst[len(bear_lst)-1]
+		roll = row[4]
+		pitch = row[5]
+		bearing = row[6] # bearing = yaw
 
-		#Get roll
-		if rpy:
-			roll = row[4]
-			roll_lst.append(roll)
-		else:
-			if len(pos_lst) < 3:
-				roll = 0.0
-				vel = 0.0		
-			else:	
-				p0 = (pos_lst[len(pos_lst)-3])
-				p1 = (pos_lst[len(pos_lst)-2])
-				p2 = (pos_lst[len(pos_lst)-1])
-
-				b_last = bear_lst[len(bear_lst)-1]
-				b_prev = bear_lst[len(bear_lst)-2]
-			
-				degchg = 180 - abs(180 - abs(b_last-b_prev))			
-				degsec1 = degchg/abs(time_chng)		
-				degsec_lst.append(degsec1)		
-			
-				if smooth_raw:
-					vel1 = row[3]
-				else:
-					d = great_circle(pointA, pointB)							
-					vel1 = d / abs(time_chng)
-
-					vel_lst.append(vel1)
-				dir = GetDir(p0,p1,p2)
-
-				if mov_avg == True: 
-					if len(vel_lst) > avg_win:	
-						vel = sum(vel_lst[len(vel_lst)-avg_win:])/avg_win	
-						degsec = sum(degsec_lst[len(degsec_lst)-avg_win:])/avg_win
-					else:
-						vel = vel1
-						degsec = degsec1
-				else:	
-					vel = vel1
-					degsec = degsec1
-		
-				roll = GetRoll(degsec, dir, vel)	
-				roll_lst.append(roll)
-		
-		# Get pitch
-		if rpy:
-			pitch = row[5]
-			pitch_lst.append(pitch)
-		else:
-			if cnt == 0:
-				pitch = 0
-			else:	
-				pitch = DefPitch(pointA, pointB)	
-				pitch_lst.append(pitch)
-
-		if smooth_raw:
-			t_st = row[4]
-			v_st = row[3]
-		else:
-			t_st = timelst[len(timelst) - 1]
-			# try:
-				# v_st = vel
-			# except:
-			d = great_circle(pointA, pointB)
-			v_st = (d / abs(time_chng)) / 0.51444444
-			#print str(d) + ' ' + str(time_chng) + ' ' + str(v_st)
-				
-		if mov_avg == True: 
-			if len(roll_lst) > avg_win: 
-				roll = sum(roll_lst[len(roll_lst)-avg_win:])/avg_win
-			if len(pitch_lst) > avg_win:	
-				pitch = sum(pitch_lst[len(pitch_lst)-avg_win:])/avg_win
-			if len(bear_lst) > avg_win:
-				anglst = bear_lst[len(bear_lst)-avg_win:]
-				bearing = AvAng(anglst)
+		t_st = timelst[len(timelst) - 1]
+		pos_lst.append([row[0], row[1], row[2], row[3]]) # Done: added row[0] to be able to use great_circle
+		pointA = (pos_lst[len(pos_lst) - 2])
+		pointB = (pos_lst[len(pos_lst) - 1])
+		d = great_circle(pointA, pointB)
+		v_st = (d / abs(time_chng)) / 0.51444444
 
 		fdr_data.append([t_st, row[1], row[2], row[3], v_st, bearing, pitch, roll])
-		cnt += 1
+
 	return fdr_data
 
 def print_flight_info(fdr_data, flight_feature):
@@ -520,6 +421,8 @@ def usage():
 	print "    --stop-time=TIME"
 	print "        Specify the stop time of the flight (truncated data after this time)."
 	print "	       Time is specified as day/month/year_hour:minute:second"
+	print "    --window=SIZE"
+	print "        Specify the window size to determine the mobile average applied to data."
 
 def main(argv):
 	global time_factor
@@ -531,10 +434,11 @@ def main(argv):
 	output = ""
 	plotting = False
 	sigma = 0
+	window = 0
 	start_time = 0
 	stop_time = time.mktime(time.localtime()) * time_factor
 	try:
-		opts, args = getopt.getopt(argv, "hdi:o:ps:", ["help", "debug", "input=", "output=", "plot", "smooth=", "info", "start-time=", "stop-time="])
+		opts, args = getopt.getopt(argv, "hdi:o:ps:w:", ["help", "debug", "input=", "output=", "plot", "smooth=", "window=", "info", "start-time=", "stop-time="])
 	except getopt.GetoptError:
 		print sys.argv[0] + ": invalid option"
 		usage()
@@ -553,6 +457,8 @@ def main(argv):
 			plotting = True
 		elif opt in ("-s", "--smooth"):
 			sigma = arg
+		elif opt in ("-w", "--window"):
+			window = arg
 		elif opt in ("--info"):
 			info = True
 		elif opt in ("--start-time"):
@@ -568,22 +474,23 @@ def main(argv):
 		if not os.path.isdir(output):
 			os.makedirs(output)
 
+	default_format = 'Time;Lon;Lat;Alt;Roll;Pitch;Yaw'
 	# Raw data
 	raw_data, flight_feature = format_and_filter_csv(input_file, start_time, stop_time, output_filename(output, '', '.csv'))
 	if debug:
-		write_french_csv(raw_data, 'TIME;LONG;LAT;ALT;ROLL;PITCH;YAW', output_filename(output, '', '_raw.csv'))
+		write_french_csv(raw_data, default_format, output_filename(output, '', '_raw.csv'))
 
 	# Clean data
 	cleaned_data = clean_raw_data(raw_data)
 	if debug:
-		write_french_csv(cleaned_data, 'TIME;LONG;LAT;ALT;ROLL;PITCH;YAW', output_filename(output, '', '_cleaned.csv'))
+		write_french_csv(cleaned_data, default_format, output_filename(output, '', '_cleaned.csv'))
 
 	# Smooth data
 	smoothed_data = smooth_data(cleaned_data, sigma)
 	if debug:
-		write_french_csv(smoothed_data, 'TIME;LONG;LAT;ALT;ROLL;PITCH;YAW', output_filename(output, '', '_smooth.csv'))
+		write_french_csv(smoothed_data, default_format, output_filename(output, '', '_smooth.csv'))
 	if plotting:
-		plot_figures(smoothed_data, 'Time;Lon;Lat;Alt;Roll;Pitch;Yaw', 'r', output, '_smooth')
+		plot_figures(smoothed_data, default_format, 'r', output, '_smooth')
 
 	# Export data to KML format
 	write_kml(smoothed_data, output_filename(output, '', '.kml'))
@@ -591,7 +498,7 @@ def main(argv):
 	# Transform to FDR format
 	fdr_data = to_fdr(smoothed_data)
 	if debug:
-		write_french_csv(fdr_data, 'TIME;LONG;LAT;ALT;SPEED;BEARING;PITCH;ROLL', output_filename(output, '', '_fdr.csv'))
+		write_french_csv(fdr_data, 'Time;Lon;Lat;Alt;Speed;Bearing;Pitch;Roll', output_filename(output, '', '_fdr.csv'))
 	if plotting:
 		plot_figures(fdr_data, 'Time;Lon;Lat;Alt;Speed;Bearing;Pitch;Roll', 'royalblue', output, '_fdr')
 

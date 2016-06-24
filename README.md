@@ -49,4 +49,6 @@ Options:
     --stop-time=TIME
         Specify the stop time of the flight (truncated data after this time).
 	       Time is specified as day/month/year_hour:minute:second
+    --window=SIZE
+        Specify the window size to determine the mobile average applied to data.
 ```
