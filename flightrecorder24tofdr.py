@@ -32,6 +32,27 @@ class FlightFeature:
 	def __str__(self):
 		return "Aircraft: %s (%s)\nPilot: %s\nLocation: %s\nDate: %s Time: UTC %s" % (self.aircraft, self.registration, self.pilot, self.location, self.date, self.time)
 
+class FixData:
+	airport_elevation = 0.0
+	elevation = 0.0
+	pitch = 0.0
+	roll = 0.0
+	yaw = 0.0
+
+	def parse_opt(self, opt, arg):
+		if opt in ("--fix-airport-elevation"):
+			self.airport_elevation = float(arg)
+		elif opt in ("--fix-elevation"):
+			self.elevation = float(arg)
+		elif opt in ("--fix-pitch"):
+			self.pitch = float(arg)
+		elif opt in ("--fix-roll"):
+			self.roll = float(arg)
+		elif opt in ("--fix-yaw"):
+			self.yaw = float(arg)
+
+	def __str__(self):
+		return "Airport Elevation: %s\nElevation: %s\nPitch: %s\nRoll: %s\nYaw: %s\n" % (self.airport_elevation, self.elevation, self.pitch, self.roll, self.yaw)
 #####
 # Clean and Filter input data
 def zero_listmaker(n):
@@ -142,36 +163,28 @@ def get_path_length(data):
 	return total_length, segment_list
 
 #####
-# Clean and smooth data
-def clean_raw_data(data):
-	cleaned_data = []
+# Fix and smooth data
+def fix_raw_data(data, fix_param):
+	fixed_data = []
 	for index, row in enumerate(data):
-		# try:
-			# pointA = data[index]
-			# pointB = data[index + 1]
-			# if great_circle(pointA, pointB) == 0:
-				# continue
-		# except:
-			# break
-		cleaned_row = row
-		# Correction of altitude: substract 121 feet
-		altitude = row[3] - 137
-		if altitude < 13: # TODO: depend on the aiport altitude
-			altitude = 13
-		cleaned_row[3] = altitude
-		# Correction of roll (+160°)
+		fixed_row = row
+		# Altitude correction
+		altitude = row[3] + fix_param.elevation
+		if altitude < fix_param.airport_elevation:
+			altitude = fix_param.airport_elevation
+		fixed_row[3] = altitude
+		# Roll correction
 		roll = row[4]
 		if (roll > 0):
-			roll -= 180
+			roll -= fix_param.roll
 		else:
-			roll += 180
-		cleaned_row[4] = roll
-		# Correction of pitch (+25°)
-		pitch = row[5]
-		cleaned_row[5] = pitch + 23
+			roll += fix_param.roll
+		fixed_row[4] = roll
+		# Pitch correction
+		fixed_row[5] = row[5] + fix_param.pitch
 
-		cleaned_data.append(cleaned_row)
-	return cleaned_data
+		fixed_data.append(fixed_row)
+	return fixed_data
 
 def smooth_data(data, sigma):
 	mat = list(zip(*data))
@@ -423,6 +436,24 @@ def usage():
 	print "	       Time is specified as day/month/year_hour:minute:second"
 	print "    --window=SIZE"
 	print "        Specify the window size to determine the mobile average applied to data."
+	print ""
+	print "Options for fixing incorrect values:"
+	print ""
+	print "    All these options enable to apply a default correction on all values."
+	print "    This append when the collecting device was not in the right position"
+	print "    when recording data. So translate logged data by specified value."
+	print ""
+	print "    --fix-airport-elevation=VAL"
+	print "        Set the default elevation of the airport to be sure that no data are (feet)"
+	print "        under this limit"
+	print "    --fix-elevation=VAL"
+	print "        Fix the elevation values adding VAL (feet)"
+	print "    --fix-pitch=VAL"
+	print "        Fix the pitch values adding VAL angle (degre)"
+	print "    --fix-roll=VAL"
+	print "        Fix the roll values adding VAL angle (degre)"
+	print "    --fix-yaw=VAL"
+	print "        Fix the yaw values adding VAL angle (degre)"
 
 def main(argv):
 	global time_factor
@@ -437,8 +468,9 @@ def main(argv):
 	window = 0
 	start_time = 0
 	stop_time = time.mktime(time.localtime()) * time_factor
+	fix_param = FixData()
 	try:
-		opts, args = getopt.getopt(argv, "hdi:o:ps:w:", ["help", "debug", "input=", "output=", "plot", "smooth=", "window=", "info", "start-time=", "stop-time="])
+		opts, args = getopt.getopt(argv, "hdi:o:ps:w:", ["help", "debug", "input=", "output=", "plot", "smooth=", "window=", "fix-airport-elevation=", "fix-elevation=", "fix-pitch=", "fix-roll=", "fix-yaw=", "info", "start-time=", "stop-time="])
 	except getopt.GetoptError:
 		print sys.argv[0] + ": invalid option"
 		usage()
@@ -456,9 +488,12 @@ def main(argv):
 		elif opt in ("-p", "--plot"):
 			plotting = True
 		elif opt in ("-s", "--smooth"):
-			sigma = arg
+			sigma = float(arg)
 		elif opt in ("-w", "--window"):
-			window = arg
+			print "Warning: window paramter is not yet implemented !"
+			window = int(arg)
+		elif opt.startswith("--fix-"):
+			fix_param.parse_opt(opt, arg)
 		elif opt in ("--info"):
 			info = True
 		elif opt in ("--start-time"):
@@ -480,13 +515,13 @@ def main(argv):
 	if debug:
 		write_french_csv(raw_data, default_format, output_filename(output, '', '_raw.csv'))
 
-	# Clean data
-	cleaned_data = clean_raw_data(raw_data)
+	# fix data
+	fixed_data = fix_raw_data(raw_data, fix_param)
 	if debug:
-		write_french_csv(cleaned_data, default_format, output_filename(output, '', '_cleaned.csv'))
+		write_french_csv(fixed_data, default_format, output_filename(output, '', '_fixed.csv'))
 
 	# Smooth data
-	smoothed_data = smooth_data(cleaned_data, sigma)
+	smoothed_data = smooth_data(fixed_data, sigma)
 	if debug:
 		write_french_csv(smoothed_data, default_format, output_filename(output, '', '_smooth.csv'))
 	if plotting:
