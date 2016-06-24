@@ -51,4 +51,22 @@ Options:
 	       Time is specified as day/month/year_hour:minute:second
     --window=SIZE
         Specify the window size to determine the mobile average applied to data.
+
+Options for fixing incorrect values:
+
+    All these options enable to apply a default correction on all values.
+    This append when the collecting device was not in the right position
+    when recording data. So translate logged data by specified value.
+
+    --fix-airport-elevation=VAL
+        Set the default elevation of the airport to be sure that no data are (feet)
+        under this limit
+    --fix-elevation=VAL
+        Fix the elevation values adding VAL (feet)
+    --fix-pitch=VAL
+        Fix the pitch values adding VAL angle (degre)
+    --fix-roll=VAL
+        Fix the roll values adding VAL angle (degre)
+    --fix-yaw=VAL
+        Fix the yaw values adding VAL angle (degre)
 ```
