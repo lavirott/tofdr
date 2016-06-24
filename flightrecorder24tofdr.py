@@ -142,39 +142,53 @@ def get_path_length(data):
 	return total_length, segment_list
 
 #####
-# Correct and smooth data
-def fix_raw_data(data):
-	fixed_data = []
+# Clean and smooth data
+def clean_raw_data(data):
+	cleaned_data = []
 	for index, row in enumerate(data):
-		try:
-			pointA = data[index]
-			pointB = data[index + 1]
-			if great_circle(pointA, pointB) == 0:
-				continue
-		except:
-			break
-		fixed_row = row
+		# try:
+			# pointA = data[index]
+			# pointB = data[index + 1]
+			# if great_circle(pointA, pointB) == 0:
+				# continue
+		# except:
+			# break
+		cleaned_row = row
 		# Correction of altitude: substract 121 feet
 		altitude = row[3] - 137
 		if altitude < 13: # TODO: depend on the aiport altitude
 			altitude = 13
-		fixed_row[3] = altitude
+		cleaned_row[3] = altitude
 		# Correction of roll (+160°)
 		roll = row[4]
 		if (roll > 0):
 			roll -= 180
 		else:
 			roll += 180
-		fixed_row[4] = roll
+		cleaned_row[4] = roll
 		# Correction of pitch (+25°)
 		pitch = row[5]
-		fixed_row[5] = pitch + 23
+		cleaned_row[5] = pitch + 23
 
-		fixed_data.append(fixed_row)
-	return fixed_data
+		cleaned_data.append(cleaned_row)
+	return cleaned_data
+
+def smooth_data(data, sigma):
+	mat = list(zip(*data))
+
+	t = np.linspace(0, 1, len(mat[0]))
+	t2 = np.linspace(0, 1, len(mat[0]))
+
+	ret_data = []
+	for col in mat:
+		values_interp = np.interp(t2, t, col)
+		values_filtered = gaussian_filter1d(values_interp, sigma)
+		ret_data.append(values_filtered)
+
+	return list(zip(*ret_data))
 
 #####
-# Manage to FDR format
+# Manage FDR format
 
 def to_fdr(data):
 	global time_factor
@@ -216,7 +230,8 @@ def to_fdr(data):
 		time_chng = (timelst[len(timelst) - 1] - timelst[len(timelst) - 2]) / time_factor
 		if time_chng == 0.0:
 			time_chng = 0.0000000001
-			print 'Suspect time at index ' + str(index) + ' !'
+			if index != 0:
+				print 'Warning: suspect time at index ' + str(index) + ' !'
 		
 		# Get bearing
 		if rpy:
@@ -443,11 +458,14 @@ def find_label_index(format, label):
 			return index
 	return -1
 
-def plot_2Dfigure(data, format, output, output_prefix, x_axis, y_axis):
+def plot_2Dfigure(data, format, color, output, output_prefix, x_axis, y_axis):
 	mat = list(zip(*data))
 
 	x_index = find_label_index(format, x_axis)
 	y_index = find_label_index(format, y_axis)
+	if (x_index == -1) or (y_index == -1): # if one of the parameter if not found, exit function
+		print 'Warning: one of the parameter (' + x_axis + ', ' + y_axis + ') not found'
+		return
 	x_values = mat[x_index]
 	y_values = mat[y_index]
 
@@ -455,19 +473,19 @@ def plot_2Dfigure(data, format, output, output_prefix, x_axis, y_axis):
 	plot.xlabel(x_axis)
 	plot.ylabel(y_axis)
 	plot.title(str(x_axis) + '_' + str(y_axis))
-	plot.plot(x_values, y_values, 'royalblue')
+	plot.plot(x_values, y_values, color)
 	plot.axis( [ min(x_values), max(x_values), min(y_values), max(y_values) ] )
 	#plot.show()
 	plot.savefig(output_file)
 	plot.clf()
 
-def plot_figures(data, format, output, output_prefix):
-	plot_2Dfigure(data, format, output, output_prefix, 'Lon', 'Lat')
-	plot_2Dfigure(data, format, output, output_prefix, 'Time', 'Alt')
-	plot_2Dfigure(data, format, output, output_prefix, 'Time', 'Speed')
-	plot_2Dfigure(data, format, output, output_prefix, 'Time', 'Pitch')
-	plot_2Dfigure(data, format, output, output_prefix, 'Time', 'Roll')
-	plot_2Dfigure(data, format, output, output_prefix, 'Time', 'Bearing')
+def plot_figures(data, format, color, output, output_prefix):
+	plot_2Dfigure(data, format, color, output, output_prefix, 'Lon', 'Lat')
+	plot_2Dfigure(data, format, color, output, output_prefix, 'Time', 'Alt')
+	plot_2Dfigure(data, format, color, output, output_prefix, 'Time', 'Speed')
+	plot_2Dfigure(data, format, color, output, output_prefix, 'Time', 'Pitch')
+	plot_2Dfigure(data, format, color, output, output_prefix, 'Time', 'Roll')
+	plot_2Dfigure(data, format, color, output, output_prefix, 'Time', 'Bearing')
 
 #####
 # Main Program
@@ -490,8 +508,12 @@ def usage():
 	print "        Activate debug flag to create more data files for debugging"
 	print "    -h, --help"
 	print "        Print this message"
+	print "    --info"
+	print "        Print information about flight collected from input file"
 	print "    -p, --plot"
 	print "        Generate different figures representing principal parameters"
+	print "    -s, --smooth=VAL"
+	print "        Specify the sigma value used for the gaussian filter to smooth"
 	print "    --start-time=TIME"
 	print "        Specify the start time of the flight (truncated data before this time)."
 	print "         Time is specified as day/month/year_hour:minute:second"
@@ -503,14 +525,16 @@ def main(argv):
 	global time_factor
 
 	# Initialize parameters values
+	debug = False
+	info = False
 	input_file = ""
 	output = ""
+	plotting = False
+	sigma = 0
 	start_time = 0
 	stop_time = time.mktime(time.localtime()) * time_factor
-	debug = False
-	plotting = False
 	try:
-		opts, args = getopt.getopt(argv, "hdi:o:p", ["help", "debug", "input=", "output=", "plot", "start-time=", "stop-time="])
+		opts, args = getopt.getopt(argv, "hdi:o:ps:", ["help", "debug", "input=", "output=", "plot", "smooth=", "info", "start-time=", "stop-time="])
 	except getopt.GetoptError:
 		print sys.argv[0] + ": invalid option"
 		usage()
@@ -521,12 +545,16 @@ def main(argv):
 			sys.exit()
 		elif opt in ("-d", "--debug"):
 			debug = True
-		elif opt in ("-p", "--plot"):
-			plotting = True
 		elif opt in ("-i", "--input"):
 			input_file = arg
 		elif opt in ("-o", "--output"):
 			output = arg
+		elif opt in ("-p", "--plot"):
+			plotting = True
+		elif opt in ("-s", "--smooth"):
+			sigma = arg
+		elif opt in ("--info"):
+			info = True
 		elif opt in ("--start-time"):
 			start_time = time.mktime(time.strptime(arg, "%d/%m/%Y_%H:%M:%S")) * time_factor
 		elif opt in ("--stop-time"):
@@ -540,26 +568,41 @@ def main(argv):
 		if not os.path.isdir(output):
 			os.makedirs(output)
 
+	# Raw data
 	raw_data, flight_feature = format_and_filter_csv(input_file, start_time, stop_time, output_filename(output, '', '.csv'))
 	if debug:
 		write_french_csv(raw_data, 'TIME;LONG;LAT;ALT;ROLL;PITCH;YAW', output_filename(output, '', '_raw.csv'))
 
-	fixed_data = fix_raw_data(raw_data)
+	# Clean data
+	cleaned_data = clean_raw_data(raw_data)
 	if debug:
-		write_french_csv(fixed_data, 'TIME;LONG;LAT;ALT;ROLL;PITCH;YAW', output_filename(output, '', '_fixed.csv'))
-	write_kml(fixed_data, output_filename(output, '', '.kml'))
+		write_french_csv(cleaned_data, 'TIME;LONG;LAT;ALT;ROLL;PITCH;YAW', output_filename(output, '', '_cleaned.csv'))
 
-	fdr_data = to_fdr(fixed_data)
+	# Smooth data
+	smoothed_data = smooth_data(cleaned_data, sigma)
+	if debug:
+		write_french_csv(smoothed_data, 'TIME;LONG;LAT;ALT;ROLL;PITCH;YAW', output_filename(output, '', '_smooth.csv'))
+	if plotting:
+		plot_figures(smoothed_data, 'Time;Lon;Lat;Alt;Roll;Pitch;Yaw', 'r', output, '_smooth')
+
+	# Export data to KML format
+	write_kml(smoothed_data, output_filename(output, '', '.kml'))
+
+	# Transform to FDR format
+	fdr_data = to_fdr(smoothed_data)
 	if debug:
 		write_french_csv(fdr_data, 'TIME;LONG;LAT;ALT;SPEED;BEARING;PITCH;ROLL', output_filename(output, '', '_fdr.csv'))
 	if plotting:
-		plot_figures(fdr_data, 'Time;Lon;Lat;Alt;Speed;Bearing;Pitch;Roll', output, '_fdr')
+		plot_figures(fdr_data, 'Time;Lon;Lat;Alt;Speed;Bearing;Pitch;Roll', 'royalblue', output, '_fdr')
 
+	# Write FDR data to file an export it to csv to verify what as been really written
 	written_data = write_fdr(fdr_data, flight_feature, output_filename(output, '', '.fdr'))
 	if debug:
 		write_french_csv(written_data, 'TIME;LONG;LAT;ALT;AILDEFL;ELEVDEFL;PITCH;ROLL;HEADING;SPEED', output_filename(output, '', '_written.csv'))
 
-	print_flight_info(fdr_data, flight_feature)
+	# Print information about flight
+	if info:
+		print_flight_info(fdr_data, flight_feature)
 
 if __name__ == "__main__":
 	main(sys.argv[1:])
