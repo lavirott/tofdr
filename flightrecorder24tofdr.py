@@ -21,6 +21,7 @@ fields_dest = ['time', 'lon', 'lat', 'h msl', 'roll', 'pitch', 'yaw']
 # Default format of a complete FDR file
 #fields_dest = ['time', 'temp', 'lon', 'lat', 'h msl', 'h rad', 'ailn', 'elev', 'rudd', 'pitch', 'roll', 'heading', 'speed', 'VVI', 'slip', 'turn', 'mach', 'AOA', 'stall', 'flap request', 'flap actual', 'slat', 'sbrk', 'gear', 'Ngear', 'Lgear', 'Rgear', 'elev trim', 'NAV–1 frq', 'NAV–2 frq', 'NAV–1 type', 'NAV–2 type', 'OBS–1', 'OBS–2', 'DME–1', 'DME–2', 'NAV–1 h-def', 'NAV–2 h-def', 'NAV–1 n/t/f', 'NAV–2 n/t/f', 'NAV–1 v-def', 'NAV–2 v-def', 'OM', 'MM', 'IM', 'f-dir 0/1', 'f-dir pitch', 'f-dir roll', 'ktmac 0/1', 'throt mode', 'hdg mode', 'alt mode', 'hnav mode', 'glslp mode', 'speed selec', 'hdg selec', 'vvi selec', 'alt selec', 'baro', 'DH', 'Mcaut 0/1', 'Mwarn 0/1', 'GPWS 0/1', 'Mmode 0–4', 'Mrang 0–6', 'throt ratio', 'prop cntrl', 'prop rpm', 'prop deg', 'N1 %', 'N2 %', 'MPR', 'EPR', 'torq', 'FF', 'ITT', 'EGT', 'CHT']
 
+# Define som useful classes or structures to group some data and treatments
 class FlightFeature:
 	date = ''
 	time = ''
@@ -51,8 +52,59 @@ class FixData:
 		elif opt in ("--fix-yaw"):
 			self.yaw = float(arg)
 
+	def usage():
+		print ""
+		print "Options for fixing incorrect values:"
+		print ""
+		print "    All these options enable to apply a default correction on all values."
+		print "    This append when the collecting device was not in the right position"
+		print "    when recording data. So translate logged data by specified value."
+		print ""
+		print "    --fix-airport-elevation=VAL"
+		print "        Set the default elevation of the airport to be sure that no data are (feet)"
+		print "        under this limit"
+		print "    --fix-elevation=VAL"
+		print "        Fix the elevation values adding VAL (feet)"
+		print "    --fix-pitch=VAL"
+		print "        Fix the pitch values adding VAL angle (degre)"
+		print "    --fix-roll=VAL"
+		print "        Fix the roll values adding VAL angle (degre)"
+		print "    --fix-yaw=VAL"
+		print "        Fix the yaw values adding VAL angle (degre)"
+
 	def __str__(self):
 		return "Airport Elevation: %s\nElevation: %s\nPitch: %s\nRoll: %s\nYaw: %s\n" % (self.airport_elevation, self.elevation, self.pitch, self.roll, self.yaw)
+
+#####
+# Utilities functions and to make some computations
+def eprint(*args):
+	sys.stderr.write(*args)
+	sys.stderr.write('\n')
+
+def great_circle(pointA, pointB):
+	lon1 = math.radians(pointA[1])
+	lat1 = math.radians(pointA[2])
+	lon2 = math.radians(pointB[1])
+	lat2 = math.radians(pointB[2])
+	R = 6371000
+	x2 = (lon2 - lon1) * math.cos(0.5 * (lat2 + lat1))
+	y2 = lat2 - lat1
+	d = R * math.sqrt(x2 * x2 + y2 * y2)
+	return d
+
+def get_path_length(data):
+	total_length = 0.0
+	segment_list = []
+	segment_list.append(0.0)
+
+	for index in range(len(data)-1):
+		pointA = data[index]
+		pointB = data[index + 1]
+		segment_length = great_circle(pointA, pointB)
+		total_length += segment_length
+		segment_list.append(segment_length)
+	return total_length, segment_list
+
 #####
 # Clean and Filter input data
 def zero_listmaker(n):
@@ -98,7 +150,7 @@ def format_and_filter_csv(input_file, start_time, stop_time, output_file):
 						ff.aircraft = row[6]
 						ff.registration = row[7]
 					else:
-						print "Warning: you are using a Flight24 release different from the one tested."
+						eprint("Warning: you are using a Flight24 release different from the one tested.")
 			else: # Index line >= 3 contains relevant data
 				# If row correspond to data that we want to convert
 				if (len(row) == len(fields_srcs)) and (is_number(row[2])):
@@ -137,32 +189,6 @@ def format_and_filter_csv(input_file, start_time, stop_time, output_file):
 	return output, ff
 
 #####
-# Utilities to make some computations
-def great_circle(pointA, pointB):
-	lon1 = math.radians(pointA[1])
-	lat1 = math.radians(pointA[2])
-	lon2 = math.radians(pointB[1])
-	lat2 = math.radians(pointB[2])
-	R = 6371000
-	x2 = (lon2 - lon1) * math.cos(0.5 * (lat2 + lat1))
-	y2 = lat2 - lat1
-	d = R * math.sqrt(x2 * x2 + y2 * y2)
-	return d
-
-def get_path_length(data):
-	total_length = 0.0
-	segment_list = []
-	segment_list.append(0.0)
-
-	for index in range(len(data)-1):
-		pointA = data[index]
-		pointB = data[index + 1]
-		segment_length = great_circle(pointA, pointB)
-		total_length += segment_length
-		segment_list.append(segment_length)
-	return total_length, segment_list
-
-#####
 # Fix and smooth data
 def fix_raw_data(data, fix_param):
 	fixed_data = []
@@ -187,22 +213,33 @@ def fix_raw_data(data, fix_param):
 	return fixed_data
 
 def smooth_data(data, sigma):
+	return smooth_row_data(data, -1, sigma)
+
+def smooth_row_data(data, row_num, sigma):
 	mat = list(zip(*data))
 
 	t = np.linspace(0, 1, len(mat[0]))
 	t2 = np.linspace(0, 1, len(mat[0]))
 
 	ret_data = []
-	for col in mat:
-		values_interp = np.interp(t2, t, col)
-		values_filtered = gaussian_filter1d(values_interp, sigma)
-		ret_data.append(values_filtered)
+	for index, row in enumerate(mat):
+		if row_num == -1:
+			values_interp = np.interp(t2, t, row)
+			values_filtered = gaussian_filter1d(values_interp, sigma)
+			ret_data.append(values_filtered)
+		else:
+			if index == row_num:
+				values_interp = np.interp(t2, t, row)
+				values_filtered = gaussian_filter1d(values_interp, sigma)
+				ret_data.append(values_filtered)
+			else:
+				ret_data.append(row)
 
 	return list(zip(*ret_data))
 
 #####
 # Manage FDR format
-def to_fdr(data):
+def to_fdr(data, sigma):
 	global time_factor
 
 	pos_lst = []
@@ -223,7 +260,7 @@ def to_fdr(data):
 		if time_chng == 0.0:
 			time_chng = 0.0000000001
 			if index != 0:
-				print 'Warning: suspect time at index ' + str(index) + ' !'
+				eprint("Warning: suspect time at index " + str(index) + " !")
 		
 		# Get bearing
 		roll = row[4]
@@ -235,11 +272,12 @@ def to_fdr(data):
 		pointA = (pos_lst[len(pos_lst) - 2])
 		pointB = (pos_lst[len(pos_lst) - 1])
 		d = great_circle(pointA, pointB)
-		v_st = (d / abs(time_chng)) / 0.51444444
+		speed = (d / abs(time_chng)) / 0.51444444
 
-		fdr_data.append([t_st, row[1], row[2], row[3], v_st, bearing, pitch, roll])
+		fdr_data.append([t_st, row[1], row[2], row[3], speed, bearing, pitch, roll])
 
-	return fdr_data
+	smooth_fdr_data = smooth_row_data(fdr_data, 4, sigma * 10) # smooth the new speed data (apply a strong smooth to speed data because, speed is generated with erroneous data: deffirence between erroneous close values)
+	return smooth_fdr_data
 
 def print_flight_info(fdr_data, flight_feature):
 	global time_factor
@@ -273,7 +311,7 @@ def write_kml(data, kml_file):
 	tag_str = ''
 	_time = 0.0
 	for index, row in enumerate(data):
-		lonlatalt_str = str(row[1]) + ',' + str(row[2]) + ',' + str(int((float(row[3])) / 3.28084)) # Converted to meters instead of feet
+		lonlatalt_str = str(row[1]) + ',' + str(row[2]) + ',' + str(int(float(row[3]) / 3.28084)) # Converted to meters instead of feet
 		lnstr = lonlatalt_str + '\n'
 		coord_str +=  lnstr
 		if (row[0] >= _time):
@@ -378,7 +416,7 @@ def plot_2Dfigure(data, format, color, output, output_prefix, x_axis, y_axis):
 	x_index = find_label_index(format, x_axis)
 	y_index = find_label_index(format, y_axis)
 	if (x_index == -1) or (y_index == -1): # if one of the parameter if not found, exit function
-		print 'Warning: one of the parameter (' + x_axis + ', ' + y_axis + ') not found'
+		eprint("Warning: one of the parameter (" + x_axis + ", " + y_axis + ") not found")
 		return
 	x_values = mat[x_index]
 	y_values = mat[y_index]
@@ -407,7 +445,7 @@ def output_filename(output_dir, filename_prefix, filename_suffix):
 	(dir, filename) = os.path.split(output_dir)
 	return output_dir + '/' + filename_prefix + filename + filename_suffix
 
-def usage():
+def usage(fix_param):
 	print "Usage: " + sys.argv[0] + " -i FILE -o DIR [option]"
 	print
 	print "flightrecorder24tofdr.py generates files in DIR from a flightrecorder24 log file"
@@ -426,7 +464,7 @@ def usage():
 	print "        Print information about flight collected from input file"
 	print "    -p, --plot"
 	print "        Generate different figures representing principal parameters"
-	print "    -s, --smooth=VAL"
+	print "    -s, --smooth=VAL, --sigma=VAL"
 	print "        Specify the sigma value used for the gaussian filter to smooth"
 	print "    --start-time=TIME"
 	print "        Specify the start time of the flight (truncated data before this time)."
@@ -436,24 +474,7 @@ def usage():
 	print "	       Time is specified as day/month/year_hour:minute:second"
 	print "    --window=SIZE"
 	print "        Specify the window size to determine the mobile average applied to data."
-	print ""
-	print "Options for fixing incorrect values:"
-	print ""
-	print "    All these options enable to apply a default correction on all values."
-	print "    This append when the collecting device was not in the right position"
-	print "    when recording data. So translate logged data by specified value."
-	print ""
-	print "    --fix-airport-elevation=VAL"
-	print "        Set the default elevation of the airport to be sure that no data are (feet)"
-	print "        under this limit"
-	print "    --fix-elevation=VAL"
-	print "        Fix the elevation values adding VAL (feet)"
-	print "    --fix-pitch=VAL"
-	print "        Fix the pitch values adding VAL angle (degre)"
-	print "    --fix-roll=VAL"
-	print "        Fix the roll values adding VAL angle (degre)"
-	print "    --fix-yaw=VAL"
-	print "        Fix the yaw values adding VAL angle (degre)"
+	fix_param.usage()
 
 def main(argv):
 	global time_factor
@@ -470,10 +491,10 @@ def main(argv):
 	stop_time = time.mktime(time.localtime()) * time_factor
 	fix_param = FixData()
 	try:
-		opts, args = getopt.getopt(argv, "hdi:o:ps:w:", ["help", "debug", "input=", "output=", "plot", "smooth=", "window=", "fix-airport-elevation=", "fix-elevation=", "fix-pitch=", "fix-roll=", "fix-yaw=", "info", "start-time=", "stop-time="])
+		opts, args = getopt.getopt(argv, "hdi:o:ps:w:", ["help", "debug", "input=", "output=", "plot", "smooth=", "sigma=", "window=", "fix-airport-elevation=", "fix-elevation=", "fix-pitch=", "fix-roll=", "fix-yaw=", "info", "start-time=", "stop-time="])
 	except getopt.GetoptError:
 		print sys.argv[0] + ": invalid option"
-		usage()
+		usage(fix_param)
 		sys.exit(2)
 	for opt, arg in opts:
 		if opt in ("-h", "--help"):
@@ -487,10 +508,10 @@ def main(argv):
 			output = arg
 		elif opt in ("-p", "--plot"):
 			plotting = True
-		elif opt in ("-s", "--smooth"):
+		elif opt in ("-s", "--smooth", "--sigma"):
 			sigma = float(arg)
 		elif opt in ("-w", "--window"):
-			print "Warning: window paramter is not yet implemented !"
+			eprint("Warning: window paramter is not yet implemented !")
 			window = int(arg)
 		elif opt.startswith("--fix-"):
 			fix_param.parse_opt(opt, arg)
@@ -503,7 +524,7 @@ def main(argv):
 
 	if (input_file == "") or (output == ""):
 		print sys.argv[0] + ": must specify arguments"
-		usage()
+		usage(fix_param)
 		sys.exit(1)
 	else:
 		if not os.path.isdir(output):
@@ -530,8 +551,8 @@ def main(argv):
 	# Export data to KML format
 	write_kml(smoothed_data, output_filename(output, '', '.kml'))
 
-	# Transform to FDR format
-	fdr_data = to_fdr(smoothed_data)
+	# Transform to FDR format (create new data, like speed, from existing ones)
+	fdr_data = to_fdr(smoothed_data, sigma)
 	if debug:
 		write_french_csv(fdr_data, 'Time;Lon;Lat;Alt;Speed;Bearing;Pitch;Roll', output_filename(output, '', '_fdr.csv'))
 	if plotting:

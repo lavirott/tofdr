@@ -41,7 +41,7 @@ Options:
         Print information about flight collected from input file
     -p, --plot
         Generate different figures representing principal parameters
-    -s, --smooth=VAL
+    -s, --smooth=VAL, --sigma=VAL
         Specify the sigma value used for the gaussian filter to smooth
     --start-time=TIME
         Specify the start time of the flight (truncated data before this time).
