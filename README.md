@@ -6,12 +6,23 @@ https://play.google.com/store/apps/details?id=com.tost.frederic.pro1flightrecord
 
 This script is inspired by fdr_tools https://opengeoxplane.net/fdr_tools/ and enable more features (like avoiding GUI to use command line parameters, generation of figures, more functions to clean source code).
 
-## Install
+## Install Python and needed packages
+### Linux
+```
+sudo apt-get install python python-numpy python-scipy python-matplotlib
+```
+
+### Windows
+Python is easy to install on Windows, but NumPy and especially SciPy are more difficult to install because of dependencies. The easiest way is to install a Python distribution including all the packages for the SciPy stack. I chose the WinPython one:
+```
+https://sourceforge.net/projects/winpython/files/WinPython_2.7/2.7.10.3/WinPython-32bit-2.7.10.3.exe/download
+```
+
+## Install Flight2FDR 
 
 ```
 https://github.com/lavirott/tofdr && cd tofdr
 chmod a+x flightrecorder24tofdr.py
-sudo apt-get install python-numpy python-scipy python-matplotlib
 ```
 ## Run
 
