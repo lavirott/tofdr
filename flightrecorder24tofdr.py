@@ -52,7 +52,7 @@ class FixData:
 		elif opt in ("--fix-yaw"):
 			self.yaw = float(arg)
 
-	def usage():
+	def usage(self):
 		print ""
 		print "Options for fixing incorrect values:"
 		print ""
@@ -498,7 +498,7 @@ def main(argv):
 		sys.exit(2)
 	for opt, arg in opts:
 		if opt in ("-h", "--help"):
-			usage()
+			usage(fix_param)
 			sys.exit()
 		elif opt in ("-d", "--debug"):
 			debug = True
