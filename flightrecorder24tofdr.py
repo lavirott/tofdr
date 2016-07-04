@@ -208,6 +208,8 @@ def fix_raw_data(data, fix_param):
 		fixed_row[4] = roll
 		# Pitch correction
 		fixed_row[5] = row[5] + fix_param.pitch
+		# Yaw correction
+		fixed_row[6] = (row[6] + fix_param.yaw) % 360
 
 		fixed_data.append(fixed_row)
 	return fixed_data
